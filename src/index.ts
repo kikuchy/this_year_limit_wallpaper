@@ -19,9 +19,22 @@ const ipCache = new Map<string, { count: number, resetAt: number }>();
 const RATE_LIMIT = 20; // Allow 20 requests per minute per isolate
 const WINDOW_MS = 60 * 1000;
 
+let lastCleanup = Date.now();
+
 function isRateLimited(ip: string | null): boolean {
     if (!ip) return false;
     const now = Date.now();
+
+    // Lazy cleanup for ipCache every 5 minutes
+    if (now - lastCleanup > 5 * 60 * 1000) {
+        lastCleanup = now;
+        for (const [key, entry] of ipCache.entries()) {
+            if (now > entry.resetAt) {
+                ipCache.delete(key);
+            }
+        }
+    }
+
     const entry = ipCache.get(ip);
 
     if (!entry || now > entry.resetAt) {
@@ -32,16 +45,6 @@ function isRateLimited(ip: string | null): boolean {
     entry.count++;
     return entry.count > RATE_LIMIT;
 }
-
-// Memory cleanup for ipCache
-setInterval(() => {
-    const now = Date.now();
-    for (const [ip, entry] of ipCache.entries()) {
-        if (now > entry.resetAt) {
-            ipCache.delete(ip);
-        }
-    }
-}, 5 * 60 * 1000); // Every 5 minutes
 
 async function initializeWasm(requestUrl: string, env: Env) {
     if (!wasmInitialized) {
@@ -250,7 +253,6 @@ export default {
 
         const progressY = indicatorY + titlePartArea + counterPartArea + 10 * scale;
 
-        console.log(width, height, indicatorX, indicatorY, indicatorWidth, indicatorHeight);
         const svg = `
 <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
 	<defs>${fontStyle}</defs>
