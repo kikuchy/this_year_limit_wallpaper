@@ -128,8 +128,7 @@ export default {
         }
 
         if (!bgImageUrl) {
-            console.error("Error fetching default wallpaper:");
-            return new Response("Error fetching default wallpaper", { status: 500 });
+            return Response.redirect("https://github.com/kikuchy/this_year_limit_wallpaper", 302);
         }
 
         // --- Layout Engine ---

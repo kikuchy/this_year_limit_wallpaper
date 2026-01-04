@@ -41,7 +41,7 @@ iOSの「ショートカット」から画像をPOSTして、自動で更新で�
 
 リクエスト例:
 ```bash
-curl -X POST -F "image=@your_image.jpg" https://your-worker.workers.dev/ > result.png
+curl -X POST -F "image=@your_image.jpg" https://year-limit.kikuchy-h.workers.dev/ > result.png
 ```
 
 - **制限**: アップロード可能なファイルサイズは最大 **5MB** です。
