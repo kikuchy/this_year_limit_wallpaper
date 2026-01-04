@@ -14,6 +14,35 @@ let wasmInitialized = false;
 let robotoFontBuffer: Uint8Array | null = null;
 let robotoBase64: string | null = null;
 
+// Basic in-memory rate limiting (per-isolate)
+const ipCache = new Map<string, { count: number, resetAt: number }>();
+const RATE_LIMIT = 20; // Allow 20 requests per minute per isolate
+const WINDOW_MS = 60 * 1000;
+
+function isRateLimited(ip: string | null): boolean {
+    if (!ip) return false;
+    const now = Date.now();
+    const entry = ipCache.get(ip);
+
+    if (!entry || now > entry.resetAt) {
+        ipCache.set(ip, { count: 1, resetAt: now + WINDOW_MS });
+        return false;
+    }
+
+    entry.count++;
+    return entry.count > RATE_LIMIT;
+}
+
+// Memory cleanup for ipCache
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, entry] of ipCache.entries()) {
+        if (now > entry.resetAt) {
+            ipCache.delete(ip);
+        }
+    }
+}, 5 * 60 * 1000); // Every 5 minutes
+
 async function initializeWasm(requestUrl: string, env: Env) {
     if (!wasmInitialized) {
         // @ts-ignore
@@ -74,6 +103,11 @@ function getImageDimensions(buffer: Uint8Array): { width: number; height: number
 
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+        const clientIp = request.headers.get("cf-connecting-ip");
+        if (isRateLimited(clientIp)) {
+            return new Response("Too Many Requests", { status: 429 });
+        }
+
         const url = new URL(request.url);
 
         if (url.pathname.endsWith(".png") || url.pathname.endsWith(".ttf") || url.pathname.endsWith(".wasm")) {
@@ -98,8 +132,9 @@ export default {
 
         if (request.method === "POST") {
             const contentLength = request.headers.get("content-length");
-            if (contentLength && parseInt(contentLength) > 10 * 1024 * 1024) {
-                return new Response("Request entity too large", { status: 413 });
+            // Strict 5MB limit based on Content-Length header
+            if (contentLength && parseInt(contentLength) > 5 * 1024 * 1024) {
+                return new Response("Request entity too large (max 5MB)", { status: 413 });
             }
 
             try {
@@ -109,18 +144,33 @@ export default {
                 if (imageBlob && typeof imageBlob !== 'string' && 'arrayBuffer' in (imageBlob as any)) {
                     const blob = imageBlob as any;
 
-                    // Limit to 5MB
+                    // Double check size just in case Content-Length was missing or spoofed
                     if (blob.size > 5 * 1024 * 1024) {
                         return new Response("File size too large (max 5MB)", { status: 413 });
                     }
 
                     const arrayBuffer = await blob.arrayBuffer();
                     const uint8 = new Uint8Array(arrayBuffer);
+
+                    // Validate image type via magic bytes
+                    const isPng = uint8[0] === 0x89 && uint8[1] === 0x50 && uint8[2] === 0x4e && uint8[3] === 0x47;
+                    const isJpeg = uint8[0] === 0xff && uint8[1] === 0xd8;
+
+                    if (!isPng && !isJpeg) {
+                        return new Response("Unsupported image format. Only PNG and JPEG are allowed.", { status: 415 });
+                    }
+
                     const dims = getImageDimensions(uint8);
+
+                    // Limit dimensions to 4096px to prevent resource exhaustion
+                    if (dims.width > 4096 || dims.height > 4096) {
+                        return new Response("Image dimensions too large (max 4096px)", { status: 400 });
+                    }
+
                     width = dims.width;
                     height = dims.height;
-                    bgImageUrl = `data:${blob.type || "image/png"};base64,${Buffer.from(arrayBuffer).toString('base64')}`;
-                    responseType = blob.type || "image/png";
+                    bgImageUrl = `data:${isPng ? "image/png" : "image/jpeg"};base64,${Buffer.from(arrayBuffer).toString('base64')}`;
+                    responseType = isPng ? "image/png" : "image/jpeg";
                 }
             } catch (e) {
                 console.error("Error parsing form data:", e);
