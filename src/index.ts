@@ -119,11 +119,37 @@ export default {
 
         await initializeWasm(request.url, env);
 
-        const now = new Date();
-        const year = now.getFullYear();
-        const startOfYear = new Date(year, 0, 1);
-        const endOfYear = new Date(year, 11, 31);
-        const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        const timezone = url.searchParams.get("tz") || (request as any).cf?.timezone || "UTC";
+        console.log(`Using timezone: ${timezone}`);
+
+        const getParts = (date: Date, tz: string) => {
+            const formatter = new Intl.DateTimeFormat('en-US', {
+                timeZone: tz,
+                year: 'numeric',
+                month: 'numeric',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: 'numeric',
+                second: 'numeric',
+                hour12: false
+            });
+            const p = formatter.formatToParts(date);
+            const res: Record<string, number> = {};
+            p.forEach(part => {
+                if (part.type !== 'literal') res[part.type] = parseInt(part.value);
+            });
+            return res;
+        };
+
+        const nowParts = getParts(new Date(), timezone);
+        const year = nowParts.year;
+
+        // Calculate dayOfYear and totalDays based on the year in the target timezone
+        const localNow = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day));
+        const startOfYear = new Date(Date.UTC(year, 0, 1));
+        const endOfYear = new Date(Date.UTC(year, 11, 31));
+
+        const dayOfYear = Math.floor((localNow.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24)) + 1;
         const totalDays = Math.floor((endOfYear.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24)) + 1;
         const remainingDays = totalDays - dayOfYear;
         const progressPercentage = (dayOfYear / totalDays) * 100;
